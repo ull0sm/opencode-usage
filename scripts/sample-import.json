@@ -1,0 +1,54 @@
+[
+  {
+    "timestamp": "2026-08-20T09:12:40Z",
+    "model": "claude-sonnet-4-5",
+    "provider": "anthropic",
+    "session_id": "ses_sample01",
+    "input_tokens": 1840,
+    "cache_read_tokens": 42100,
+    "cache_write_tokens": 2100,
+    "output_tokens": 512,
+    "reasoning_tokens": 340,
+    "cost": 0.0812
+  },
+  {
+    "timestamp": "2026-08-20T09:14:02Z",
+    "model": "gpt-5",
+    "provider": "openai",
+    "session_id": "ses_sample01",
+    "input_tokens": 990,
+    "output_tokens": 780,
+    "cost": 0.0240
+  },
+  {
+    "id": "msg_01JABCDEF",
+    "role": "assistant",
+    "sessionID": "ses_sample02",
+    "modelID": "claude-opus-4-1",
+    "providerID": "anthropic",
+    "time": { "created": 1755682500000 },
+    "cost": 0.1934,
+    "tokens": { "input": 2210, "output": 905, "reasoning": 1240, "cache": { "read": 88200, "write": 5100 } }
+  },
+  {
+    "timestamp": "2026-08-19T16:45:11Z",
+    "model": "claude-haiku-4-5",
+    "provider": "anthropic",
+    "session_id": "ses_sample03",
+    "input_tokens": 640,
+    "output_tokens": 210,
+    "reasoning_tokens": 0,
+    "cost": 0.0031
+  },
+  {
+    "timestamp": "2026-08-19T16:45:11Z",
+    "model": "claude-haiku-4-5",
+    "provider": "anthropic",
+    "session_id": "ses_sample03",
+    "input_tokens": 640,
+    "output_tokens": 210,
+    "reasoning_tokens": 0,
+    "cost": 0.0031
+  },
+  { "this row is intentionally broken": true }
+]

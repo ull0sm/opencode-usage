@@ -1,0 +1,126 @@
+export interface UsageFilters {
+  from?: string; // YYYY-MM-DD or full ISO
+  to?: string;
+  model?: string | string[];
+  provider?: string;
+  session?: string;
+}
+
+type SearchParamsLike = Record<string, string | string[] | undefined>;
+
+function firstValue(sp: SearchParamsLike, key: string): string | undefined {
+  const v = sp[key];
+  return Array.isArray(v) ? v[0] : v || undefined;
+}
+
+function allValues(sp: SearchParamsLike, key: string): string[] {
+  const v = sp[key];
+  if (!v) return [];
+  return (Array.isArray(v) ? v : [v])
+    .flatMap((x) => x.split(","))
+    .map((x) => x.trim())
+    .filter(Boolean);
+}
+
+/** Normalize a model filter to a non-empty array, or undefined. */
+export function modelList(model: UsageFilters["model"]): string[] | undefined {
+  const list = model == null ? [] : Array.isArray(model) ? model : [model];
+  const valid = list.filter((m) => m && m !== "all");
+  return valid.length > 0 ? valid : undefined;
+}
+
+export function filtersFromSearchParams(sp: SearchParamsLike): UsageFilters {
+  const f: UsageFilters = {};
+  const from = firstValue(sp, "from");
+  const to = firstValue(sp, "to");
+  const models = allValues(sp, "model").filter((m) => m !== "all");
+  const provider = firstValue(sp, "provider");
+  const session = firstValue(sp, "session");
+  if (from) f.from = from;
+  if (to) f.to = to;
+  if (models.length === 1) f.model = models[0];
+  else if (models.length > 1) f.model = models;
+  if (provider && provider !== "all") f.provider = provider;
+  if (session) f.session = session;
+  return f;
+}
+
+export function hasFilters(f: UsageFilters): boolean {
+  return Boolean(
+    f.from ||
+      f.to ||
+      f.provider ||
+      f.session ||
+      modelList(f.model)
+  );
+}
+
+function tsLowerBound(v: string): string {
+  return /^\d{4}-\d{2}-\d{2}$/.test(v) ? `${v}T00:00:00.000Z` : v;
+}
+function tsUpperBound(v: string): string {
+  return /^\d{4}-\d{2}-\d{2}$/.test(v) ? `${v}T23:59:59.999Z` : v;
+}
+
+/**
+ * The immediately preceding period of equal length, or null when the filter
+ * has no bounded date range (e.g. "All time") — used for trend comparisons.
+ */
+export function previousPeriod(f: UsageFilters): UsageFilters | null {
+  if (!f.from || !f.to) return null;
+  const from = new Date(tsLowerBound(f.from));
+  const to = new Date(tsUpperBound(f.to));
+  if (Number.isNaN(from.getTime()) || Number.isNaN(to.getTime())) return null;
+  const prevTo = new Date(from.getTime() - 1);
+  const prevFrom = new Date(prevTo.getTime() - (to.getTime() - from.getTime()));
+  return { ...f, from: prevFrom.toISOString(), to: prevTo.toISOString() };
+}
+
+export interface WhereClause {
+  sql: string;
+  params: unknown[];
+}
+
+export function buildWhere(f: UsageFilters): WhereClause {
+  const conds: string[] = [];
+  const params: unknown[] = [];
+
+  if (f.from) {
+    conds.push("ts >= ?");
+    params.push(tsLowerBound(f.from));
+  }
+  if (f.to) {
+    conds.push("ts <= ?");
+    params.push(tsUpperBound(f.to));
+  }
+
+  const models = modelList(f.model);
+  if (models?.length === 1) {
+    conds.push("model = ?");
+    params.push(models[0]);
+  } else if (models && models.length > 1) {
+    conds.push(`model IN (${models.map(() => "?").join(", ")})`);
+    params.push(...models);
+  }
+
+  if (f.provider) {
+    conds.push("provider = ?");
+    params.push(f.provider);
+  }
+  if (f.session) {
+    conds.push("session_id LIKE '%' || ? || '%'");
+    params.push(f.session);
+  }
+  return { sql: conds.length ? `WHERE ${conds.join(" AND ")}` : "", params };
+}
+
+/** Append filter params into a URL for API routes. */
+export function filtersToQuery(f: UsageFilters): URLSearchParams {
+  const q = new URLSearchParams();
+  if (f.from) q.set("from", f.from);
+  if (f.to) q.set("to", f.to);
+  for (const m of modelList(f.model) ?? []) q.append("model", m);
+  if (f.provider) q.set("provider", f.provider);
+  if (f.session) q.set("session", f.session);
+  return q;
+}

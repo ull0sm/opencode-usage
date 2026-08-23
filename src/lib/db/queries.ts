@@ -1,0 +1,352 @@
+import { getDb } from "./index";
+import { contentHash } from "../validation";
+import type {
+  EfficiencyStats,
+  HourBucket,
+  ModelBreakdown,
+  ModelEfficiencyRow,
+  SessionBreakdown,
+  SummaryRow,
+  TimeseriesPoint,
+  UsageRecord,
+} from "../types";
+import { buildWhere, type UsageFilters } from "../filters";
+
+export interface InsertOutcome {
+  inserted: number;
+  skipped: number;
+}
+
+const INSERT_SQL = `
+  INSERT OR IGNORE INTO usage_events
+    (ts, model, provider, session_id,
+     input_tokens, cache_read_tokens, cache_write_tokens, output_tokens, reasoning_tokens,
+     cost, content_hash, source_ref, raw_usage)
+  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+`;
+
+export function insertRecords(records: UsageRecord[]): InsertOutcome {
+  const db = getDb();
+  const stmt = db.prepare(INSERT_SQL);
+  let inserted = 0;
+  let skipped = 0;
+  const insertAll = db.transaction((recs: UsageRecord[]) => {
+    for (const r of recs) {
+      const hash = r.source_ref ?? contentHash(r);
+      const info = stmt.run(
+        r.ts,
+        r.model,
+        r.provider,
+        r.session_id,
+        r.input_tokens,
+        r.cache_read_tokens,
+        r.cache_write_tokens,
+        r.output_tokens,
+        r.reasoning_tokens,
+        r.cost,
+        hash,
+        r.source_ref,
+        r.raw_usage
+      );
+      if (info.changes > 0) inserted += 1;
+      else skipped += 1;
+    }
+  });
+  insertAll(records);
+  return { inserted, skipped };
+}
+
+const SORT_COLUMNS = new Set([
+  "ts",
+  "model",
+  "provider",
+  "session_id",
+  "input_tokens",
+  "cache_read_tokens",
+  "cache_write_tokens",
+  "output_tokens",
+  "reasoning_tokens",
+  "cost",
+]);
+
+export interface ListOptions {
+  filter: UsageFilters;
+  page?: number;
+  pageSize?: number;
+  sort?: string;
+  dir?: string;
+}
+
+export function listUsage(opts: ListOptions) {
+  const db = getDb();
+  const { sql: where, params } = buildWhere(opts.filter);
+  const sortCol = SORT_COLUMNS.has(opts.sort ?? "") ? opts.sort! : "ts";
+  const dir = opts.dir?.toLowerCase() === "asc" ? "ASC" : "DESC";
+  const pageSize = Math.min(Math.max(opts.pageSize ?? 25, 1), 500);
+  const page = Math.max(opts.page ?? 1, 1);
+  const offset = (page - 1) * pageSize;
+
+  const total = (
+    db.prepare(`SELECT COUNT(*) AS n FROM usage_events ${where}`).get(...params) as { n: number }
+  ).n;
+  const rows = db
+    .prepare(
+      `SELECT * FROM usage_events ${where} ORDER BY ${sortCol} ${dir}, id DESC LIMIT ? OFFSET ?`
+    )
+    .all(...params, pageSize, offset);
+
+  return { rows, total, page, page_size: pageSize };
+}
+
+const SUM_SELECT = `
+  COUNT(*) AS requests,
+  COALESCE(SUM(input_tokens), 0) AS input_tokens,
+  COALESCE(SUM(cache_read_tokens), 0) AS cache_read_tokens,
+  COALESCE(SUM(cache_write_tokens), 0) AS cache_write_tokens,
+  COALESCE(SUM(output_tokens), 0) AS output_tokens,
+  COALESCE(SUM(reasoning_tokens), 0) AS reasoning_tokens,
+  COALESCE(SUM(cost), 0) AS cost
+`;
+
+export function getSummary(filter: UsageFilters): SummaryRow {
+  const db = getDb();
+  const { sql: where, params } = buildWhere(filter);
+  return db.prepare(`SELECT ${SUM_SELECT} FROM usage_events ${where}`).get(...params) as SummaryRow;
+}
+
+export function getTimeseries(filter: UsageFilters): TimeseriesPoint[] {
+  const db = getDb();
+  const { sql: where, params } = buildWhere(filter);
+  return db
+    .prepare(
+      `SELECT strftime('%Y-%m-%d', ts) AS date, ${SUM_SELECT}
+       FROM usage_events ${where}
+       GROUP BY date ORDER BY date ASC`
+    )
+    .all(...params) as TimeseriesPoint[];
+}
+
+export function getByModel(filter: UsageFilters, limit = 12): ModelBreakdown[] {
+  const db = getDb();
+  const { sql: where, params } = buildWhere(filter);
+  return db
+    .prepare(
+      `SELECT model,
+              COUNT(*) AS requests,
+              COALESCE(SUM(input_tokens), 0) AS input_tokens,
+              COALESCE(SUM(cache_read_tokens), 0) AS cache_read_tokens,
+              COALESCE(SUM(output_tokens), 0) AS output_tokens,
+              COALESCE(SUM(reasoning_tokens), 0) AS reasoning_tokens,
+              COALESCE(SUM(cost), 0) AS cost
+       FROM usage_events ${where}
+       GROUP BY model
+       ORDER BY SUM(output_tokens + reasoning_tokens + input_tokens + cache_read_tokens + cache_write_tokens) DESC
+       LIMIT ?`
+    )
+    .all(...params, limit) as ModelBreakdown[];
+}
+
+export function getBySession(filter: UsageFilters, limit = 10): SessionBreakdown[] {
+  const db = getDb();
+  const { sql: where, params } = buildWhere(filter);
+  return db
+    .prepare(
+      `SELECT session_id,
+              COUNT(*) AS requests,
+              COALESCE(SUM(input_tokens), 0) AS input_tokens,
+              COALESCE(SUM(cache_read_tokens), 0) AS cache_read_tokens,
+              COALESCE(SUM(output_tokens), 0) AS output_tokens,
+              COALESCE(SUM(reasoning_tokens), 0) AS reasoning_tokens,
+              COALESCE(SUM(cost), 0) AS cost,
+              MAX(ts) AS last_ts
+       FROM usage_events ${where}
+       GROUP BY session_id
+       ORDER BY SUM(output_tokens + reasoning_tokens + input_tokens + cache_read_tokens + cache_write_tokens) DESC
+       LIMIT ?`
+    )
+    .all(...params, limit) as SessionBreakdown[];
+}
+
+export function getByHourOfDay(filter: UsageFilters): HourBucket[] {
+  const db = getDb();
+  const { sql: where, params } = buildWhere(filter);
+  return db
+    .prepare(
+      `SELECT strftime('%H', ts) AS hour,
+              COUNT(*) AS requests,
+              COALESCE(SUM(input_tokens), 0) AS input_tokens,
+              COALESCE(SUM(cache_read_tokens), 0) AS cache_read_tokens,
+              COALESCE(SUM(output_tokens), 0) AS output_tokens,
+              COALESCE(SUM(reasoning_tokens), 0) AS reasoning_tokens,
+              COALESCE(SUM(input_tokens + cache_read_tokens + output_tokens + reasoning_tokens), 0) AS tokens
+       FROM usage_events ${where}
+       GROUP BY hour ORDER BY hour ASC`
+    )
+    .all(...params) as HourBucket[];
+}
+
+export function getMeta() {
+  const db = getDb();
+  const stats = db
+    .prepare(`SELECT COUNT(*) AS row_count, MIN(ts) AS first_ts, MAX(ts) AS last_ts FROM usage_events`)
+    .get() as { row_count: number; first_ts: string | null; last_ts: string | null };
+  const models = db
+    .prepare(`SELECT DISTINCT model FROM usage_events ORDER BY model LIMIT 1000`)
+    .all()
+    .map((r) => (r as { model: string }).model);
+  const providers = db
+    .prepare(`SELECT DISTINCT provider FROM usage_events WHERE provider IS NOT NULL ORDER BY provider LIMIT 100`)
+    .all()
+    .map((r) => (r as { provider: string }).provider);
+  const sessions = db
+    .prepare(`SELECT DISTINCT session_id FROM usage_events WHERE session_id IS NOT NULL ORDER BY session_id DESC LIMIT 1000`)
+    .all()
+    .map((r) => (r as { session_id: string }).session_id);
+  return { ...stats, models, providers, sessions };
+}
+
+export function resetDb(): number {
+  const db = getDb();
+  const info = db.prepare("DELETE FROM usage_events").run();
+  return info.changes;
+}
+
+export function exportRows(filter: UsageFilters): Record<string, unknown>[] {
+  const db = getDb();
+  const { sql: where, params } = buildWhere(filter);
+  return db
+    .prepare(`SELECT * FROM usage_events ${where} ORDER BY ts ASC LIMIT 1000000`)
+    .all(...params) as Record<string, unknown>[];
+}
+
+export function getUsageById(id: number): Record<string, unknown> | undefined {
+  const db = getDb();
+  return db.prepare(`SELECT * FROM usage_events WHERE id = ?`).get(id) as
+    | Record<string, unknown>
+    | undefined;
+}
+
+export interface SessionDetail extends SummaryRow {
+  session_id: string;
+  first_ts: string | null;
+  last_ts: string | null;
+}
+
+/** Full aggregate for one session — ignores dashboard filters by design. */
+export function getSessionDetail(sessionId: string): SessionDetail | undefined {
+  const db = getDb();
+  return db
+    .prepare(
+      `SELECT session_id,
+              ${SUM_SELECT},
+              MIN(ts) AS first_ts,
+              MAX(ts) AS last_ts
+       FROM usage_events
+       WHERE session_id = ?
+       GROUP BY session_id`
+    )
+    .get(sessionId) as SessionDetail | undefined;
+}
+
+const SESSION_EVENTS_LIMIT = 5000;
+
+/** Every request in one session, chronological. */
+export function listSessionEvents(sessionId: string): Record<string, unknown>[] {
+  const db = getDb();
+  return db
+    .prepare(
+      `SELECT * FROM usage_events
+       WHERE session_id = ?
+       ORDER BY ts ASC, id ASC
+       LIMIT ${SESSION_EVENTS_LIMIT}`
+    )
+    .all(sessionId) as Record<string, unknown>[];
+}
+
+/**
+ * Derived efficiency metrics for the current filter. Sessions without a
+ * session_id are excluded from per-session averages (SQLite DISTINCT skips NULLs).
+ */
+export function getEfficiency(filter: UsageFilters): EfficiencyStats {
+  const db = getDb();
+  const { sql: where, params } = buildWhere(filter);
+  const s = getSummary(filter);
+  const sessions = (
+    db
+      .prepare(
+        `SELECT COUNT(DISTINCT session_id) AS n FROM usage_events ${where}`
+      )
+      .get(...params) as { n: number }
+  ).n;
+
+  const totalTokens =
+    s.input_tokens +
+    s.cache_read_tokens +
+    s.cache_write_tokens +
+    s.output_tokens +
+    s.reasoning_tokens;
+  const contextTokens = s.input_tokens + s.cache_read_tokens;
+
+  return {
+    requests: s.requests,
+    sessions,
+    total_tokens: totalTokens,
+    cache_hit_rate: contextTokens > 0 ? s.cache_read_tokens / contextTokens : null,
+    blended_cost_per_1m:
+      totalTokens > 0 && s.cost > 0 ? (s.cost / totalTokens) * 1_000_000 : null,
+    avg_tokens_per_request: s.requests > 0 ? totalTokens / s.requests : null,
+    avg_cost_per_request: s.requests > 0 && s.cost > 0 ? s.cost / s.requests : null,
+    avg_requests_per_session: sessions > 0 ? s.requests / sessions : null,
+    avg_tokens_per_session: sessions > 0 ? totalTokens / sessions : null,
+  };
+}
+
+const MODEL_EFFICIENCY_LIMIT = 50;
+
+/** Per-model cost-per-1M-tokens, most expensive first. Zero-cost models last. */
+export function getModelEfficiency(filter: UsageFilters): ModelEfficiencyRow[] {
+  const db = getDb();
+  const { sql: where, params } = buildWhere(filter);
+  const rows = db
+    .prepare(
+      `SELECT model,
+              COUNT(*) AS requests,
+              COALESCE(SUM(input_tokens), 0) AS input_tokens,
+              COALESCE(SUM(cache_read_tokens), 0) AS cache_read_tokens,
+              COALESCE(SUM(cache_write_tokens), 0) AS cache_write_tokens,
+              COALESCE(SUM(output_tokens), 0) AS output_tokens,
+              COALESCE(SUM(reasoning_tokens), 0) AS reasoning_tokens,
+              COALESCE(SUM(cost), 0) AS cost
+       FROM usage_events ${where}
+       GROUP BY model`
+    )
+    .all(...params) as (ModelBreakdown & { cache_write_tokens: number })[];
+
+  return rows
+    .map((r) => {
+      const total =
+        r.input_tokens +
+        r.cache_read_tokens +
+        r.cache_write_tokens +
+        r.output_tokens +
+        r.reasoning_tokens;
+      return {
+        model: r.model,
+        requests: r.requests,
+        total_tokens: total,
+        cost: r.cost,
+        cost_per_1m: total > 0 && r.cost > 0 ? (r.cost / total) * 1_000_000 : null,
+      };
+    })
+    .sort((a, b) => {
+      if (a.cost_per_1m == null && b.cost_per_1m == null) return b.total_tokens - a.total_tokens;
+      if (a.cost_per_1m == null) return 1;
+      if (b.cost_per_1m == null) return -1;
+      return b.cost_per_1m - a.cost_per_1m;
+    })
+    .slice(0, MODEL_EFFICIENCY_LIMIT);
+}
+
+export function computeHash(r: UsageRecord): string {
+  return r.source_ref ?? contentHash(r);
+}
