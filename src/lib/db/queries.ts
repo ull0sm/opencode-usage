@@ -114,16 +114,26 @@ export function getSummary(filter: UsageFilters): SummaryRow {
   return db.prepare(`SELECT ${SUM_SELECT} FROM usage_events ${where}`).get(...params) as SummaryRow;
 }
 
-export function getTimeseries(filter: UsageFilters): TimeseriesPoint[] {
+/**
+ * Daily token buckets. `dayShiftMinutes` shifts the day boundary so days are
+ * grouped by the viewer's calendar (pass +330 for IST / UTC+05:30).
+ */
+export function getTimeseries(filter: UsageFilters, dayShiftMinutes = 0): TimeseriesPoint[] {
   const db = getDb();
   const { sql: where, params } = buildWhere(filter);
+  const shiftParams: string[] = [];
+  let dateExpr = `strftime('%Y-%m-%d', ts)`;
+  if (dayShiftMinutes !== 0 && Number.isFinite(dayShiftMinutes)) {
+    dateExpr = `strftime('%Y-%m-%d', ts, ?)`;
+    shiftParams.push(`${Math.trunc(dayShiftMinutes)} minutes`);
+  }
   return db
     .prepare(
-      `SELECT strftime('%Y-%m-%d', ts) AS date, ${SUM_SELECT}
+      `SELECT ${dateExpr} AS date, ${SUM_SELECT}
        FROM usage_events ${where}
        GROUP BY date ORDER BY date ASC`
     )
-    .all(...params) as TimeseriesPoint[];
+    .all(...shiftParams, ...params) as TimeseriesPoint[];
 }
 
 export function getByModel(filter: UsageFilters, limit = 12): ModelBreakdown[] {
@@ -167,12 +177,19 @@ export function getBySession(filter: UsageFilters, limit = 10): SessionBreakdown
     .all(...params, limit) as SessionBreakdown[];
 }
 
-export function getByHourOfDay(filter: UsageFilters): HourBucket[] {
+/** Hour-of-day buckets; `dayShiftMinutes` shifts to the viewer's local clock. */
+export function getByHourOfDay(filter: UsageFilters, dayShiftMinutes = 0): HourBucket[] {
   const db = getDb();
   const { sql: where, params } = buildWhere(filter);
+  const shiftParams: string[] = [];
+  let hourExpr = `strftime('%H', ts)`;
+  if (dayShiftMinutes !== 0 && Number.isFinite(dayShiftMinutes)) {
+    hourExpr = `strftime('%H', ts, ?)`;
+    shiftParams.push(`${Math.trunc(dayShiftMinutes)} minutes`);
+  }
   return db
     .prepare(
-      `SELECT strftime('%H', ts) AS hour,
+      `SELECT ${hourExpr} AS hour,
               COUNT(*) AS requests,
               COALESCE(SUM(input_tokens), 0) AS input_tokens,
               COALESCE(SUM(cache_read_tokens), 0) AS cache_read_tokens,
@@ -182,7 +199,7 @@ export function getByHourOfDay(filter: UsageFilters): HourBucket[] {
        FROM usage_events ${where}
        GROUP BY hour ORDER BY hour ASC`
     )
-    .all(...params) as HourBucket[];
+    .all(...shiftParams, ...params) as HourBucket[];
 }
 
 export function getMeta() {

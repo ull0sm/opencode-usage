@@ -18,7 +18,8 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { fmtCost, fmtDateTime, fmtDuration, fmtInt } from "@/lib/format";
+import { fmtCost, fmtDuration, fmtInt } from "@/lib/format";
+import { LocalTime } from "@/components/local-time";
 import type { UsageEvent } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
@@ -76,11 +77,15 @@ export default async function SessionPage(
         </span>
         <span>
           First request:{" "}
-          <span className="tabular-nums">{fmtDateTime(detail.first_ts)}</span>
+          <span className="tabular-nums">
+            <LocalTime iso={detail.first_ts ?? ""} />
+          </span>
         </span>
         <span>
           Last request:{" "}
-          <span className="tabular-nums">{fmtDateTime(detail.last_ts)}</span>
+          <span className="tabular-nums">
+            <LocalTime iso={detail.last_ts ?? ""} />
+          </span>
         </span>
       </div>
 
@@ -123,7 +128,7 @@ export default async function SessionPage(
                 {events.map((e) => (
                   <TableRow key={e.id}>
                     <TableCell className="whitespace-nowrap tabular-nums">
-                      {fmtDateTime(e.ts)}
+                      <LocalTime iso={e.ts} />
                     </TableCell>
                     <TableCell>{e.provider ?? "—"}</TableCell>
                     <TableCell>{e.model}</TableCell>

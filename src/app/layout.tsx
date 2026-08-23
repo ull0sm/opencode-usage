@@ -3,6 +3,7 @@ import { Geist, Geist_Mono, Inter } from "next/font/google";
 import "./globals.css";
 import { cn } from "@/lib/utils";
 import { Nav } from "@/components/nav";
+import { TzSync } from "@/components/tz-sync";
 import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { Activity } from "lucide-react";
@@ -68,6 +69,7 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
             </div>
           </div>
         </TooltipProvider>
+        <TzSync />
         <Toaster theme="dark" position="bottom-right" richColors />
       </body>
     </html>

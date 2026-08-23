@@ -33,6 +33,17 @@ export function fmtDateTime(iso: string | null | undefined): string {
   });
 }
 
+/** Timezone-independent formatter for deterministic SSR placeholders. */
+export function fmtDateTimeUtc(iso: string | null | undefined): string {
+  if (!iso) return "—";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())} ${pad(
+    d.getUTCHours()
+  )}:${pad(d.getUTCMinutes())}`;
+}
+
 export function fmtDay(iso: string): string {
   // iso is YYYY-MM-DD (UTC bucket); render without timezone shifting
   return iso.slice(5).replace("-", "/");

@@ -33,13 +33,16 @@ if (!fs.existsSync(SOURCE_DB)) {
   process.exit(1);
 }
 
-// snapshot source incl. WAL so we never disturb the live files
+// snapshot source incl. WAL (never the -shm index — see below)
 const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "opencode-import-"));
-for (const ext of ["", "-wal", "-shm"]) {
+for (const ext of ["", "-wal"]) {
   const p = SOURCE_DB + ext;
   if (fs.existsSync(p)) fs.copyFileSync(p, path.join(tmpDir, "oc.db" + ext));
 }
-const src = new Database(path.join(tmpDir, "oc.db"), { readonly: true });
+// open the private copy READ-WRITE (no readonly!) so SQLite recovers the WAL
+// frames; opening readonly with a missing/stale shm can silently ignore them
+const src = new Database(path.join(tmpDir, "oc.db"));
+src.pragma("busy_timeout = 3000");
 
 const rows = src.prepare("SELECT id, session_id, time_created, data FROM message ORDER BY time_created ASC").all();
 src.close();

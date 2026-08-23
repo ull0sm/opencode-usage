@@ -24,18 +24,28 @@ const config: ChartConfig = Object.fromEntries(
   TOKEN_SERIES.map((s) => [s.key, { label: s.label, color: s.color }])
 ) as ChartConfig;
 
+const pad2 = (n: number) => String(n).padStart(2, "0");
+
+/** Browser-local label — this component only renders after hydration. */
 function labelFor(ts: string, index: number, multiDay: boolean): string {
   const d = new Date(ts);
   if (Number.isNaN(d.getTime())) return String(index + 1);
-  const day = d.toISOString().slice(5, 10).replace("-", "/");
-  const time = d.toISOString().slice(11, 16);
+  const day = `${pad2(d.getMonth() + 1)}/${pad2(d.getDate())}`;
+  const time = `${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
   return multiDay ? `${day} ${time}` : time;
 }
 
 /** Stacked per-request token usage across a single session, chronological. */
 export function SessionTimelineChart({ data }: { data: SessionEventPoint[] }) {
   if (!data.length) return null;
-  const days = new Set(data.map((d) => d.ts.slice(0, 10)));
+  const days = new Set(
+    data.map((d) => {
+      const dte = new Date(d.ts);
+      return Number.isNaN(dte.getTime())
+        ? d.ts.slice(0, 10)
+        : `${dte.getFullYear()}-${pad2(dte.getMonth() + 1)}-${pad2(dte.getDate())}`;
+    })
+  );
   const multiDay = days.size > 1;
 
   return (

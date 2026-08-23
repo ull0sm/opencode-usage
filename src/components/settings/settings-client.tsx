@@ -73,10 +73,13 @@ export function SettingsClient() {
                 const res = await fetch("/api/import/opencode", { method: "POST" });
                 const data = await res.json();
                 if (!res.ok) throw new Error(data.error ?? "Import failed");
-                toast.success(
-                  `Imported ${data.inserted} record(s) from ${data.sessions?.length ?? 0} session(s)` +
-                    (data.skipped_duplicates ? ` (${data.skipped_duplicates} duplicates skipped)` : "")
-                );
+                const bits = [
+                  `${data.inserted} new record(s)`,
+                  `${data.sessions?.length ?? 0} session(s)`,
+                ];
+                if (data.skipped_duplicates) bits.push(`${data.skipped_duplicates} duplicate(s) skipped`);
+                if (data.skipped_empty) bits.push(`${data.skipped_empty} empty`);
+                toast.success(`Imported ${bits.join(", ")}`);
                 refresh();
               } catch (e) {
                 toast.error(e instanceof Error ? e.message : "Import failed");

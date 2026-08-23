@@ -45,6 +45,7 @@ export interface OpencodeImportStats {
   skipped_duplicates: number;
   skipped_empty: number;
   errors: number;
+  error_samples: string[];
   sessions: OpencodeSessionInfo[];
 }
 
@@ -63,11 +64,14 @@ export function importFromOpencode(dbPath?: string): OpencodeImportStats {
 
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "opencode-import-"));
   try {
-    for (const ext of ["", "-wal", "-shm"]) {
+    // Snapshot the live DB. The -shm index must NOT be copied: a stale index
+    // makes a readonly reader skip the -wal frames holding the newest writes.
+    // We open the private copy read-write so SQLite can recover the WAL fully.
+    for (const ext of ["", "-wal"]) {
       const p = src + ext;
       if (fs.existsSync(p)) fs.copyFileSync(p, path.join(tmpDir, "oc.db" + ext));
     }
-    const odb = new Database(path.join(tmpDir, "oc.db"), { readonly: true });
+    const odb = new Database(path.join(tmpDir, "oc.db"));
 
     const titles = new Map<string, { title: string | null; directory: string | null }>();
     try {
@@ -90,6 +94,7 @@ export function importFromOpencode(dbPath?: string): OpencodeImportStats {
     let assistants = 0;
     let skippedEmpty = 0;
     let errors = 0;
+    const errorSamples: string[] = [];
 
     for (const row of rows) {
       let msg: Record<string, unknown>;
@@ -97,10 +102,16 @@ export function importFromOpencode(dbPath?: string): OpencodeImportStats {
         msg = JSON.parse(row.data);
       } catch {
         errors += 1;
+        errorSamples.push(`row ${row.id}: unparseable JSON`);
         continue;
       }
       if ((msg as { role?: string }).role !== "assistant") continue;
       assistants += 1;
+
+      // Newer OpenCode builds keep id/sessionID only in table columns, not in
+      // the JSON payload — backfill them so normalization can proceed.
+      if (typeof msg.id !== "string" || !msg.id) msg.id = row.id;
+      if (typeof msg.sessionID !== "string" || !msg.sessionID) msg.sessionID = row.session_id;
 
       const tokens = (msg.tokens ?? {}) as Record<string, unknown>;
       const cache = (tokens.cache ?? {}) as Record<string, unknown>;
@@ -123,7 +134,11 @@ export function importFromOpencode(dbPath?: string): OpencodeImportStats {
 
       const res = normalizeRecord(withTime);
       if (res.status === "record") records.push(res.record);
-      else errors += 1;
+      else {
+        errors += 1;
+        const reason = res.status === "error" ? res.error : res.reason;
+        if (errorSamples.length < 5) errorSamples.push(`row ${row.id}: ${reason}`);
+      }
     }
 
     const { inserted, skipped } = insertRecords(records);
@@ -143,6 +158,7 @@ export function importFromOpencode(dbPath?: string): OpencodeImportStats {
       skipped_duplicates: skipped,
       skipped_empty: skippedEmpty,
       errors,
+      error_samples: errorSamples,
       sessions: [...perSession.entries()].map(([id, messages]) => ({
         id,
         title: titles.get(id)?.title ?? null,

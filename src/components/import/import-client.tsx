@@ -22,7 +22,7 @@ import {
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
 import type { ImportResult } from "@/lib/types";
-import { fmtCost, fmtInt } from "@/lib/format";
+import { fmtCost, fmtDateTime, fmtInt } from "@/lib/format";
 
 const TEMPLATE_CSV = `timestamp,model,provider,input_tokens,cache_read_tokens,cache_write_tokens,output_tokens,reasoning_tokens,cost,session_id
 2026-08-20T10:15:00Z,claude-sonnet-4-5,anthropic,1204,8800,1400,356,210,0.0312,ses_demo01
@@ -217,7 +217,7 @@ export function ImportClient() {
                   <TableBody>
                     {result.preview.map((r, i) => (
                       <TableRow key={i}>
-                        <TableCell className="whitespace-nowrap text-xs">{String(r.ts)}</TableCell>
+                        <TableCell className="whitespace-nowrap text-xs">{fmtDateTime(String(r.ts))}</TableCell>
                         <TableCell className="text-xs">{String(r.model)}</TableCell>
                         <TableCell className="text-right tabular-nums">{fmtInt(Number(r.input_tokens))}</TableCell>
                         <TableCell className="text-right tabular-nums">{fmtInt(Number(r.cache_read_tokens))}</TableCell>

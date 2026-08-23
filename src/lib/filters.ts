@@ -114,6 +114,25 @@ export function buildWhere(f: UsageFilters): WhereClause {
   return { sql: conds.length ? `WHERE ${conds.join(" AND ")}` : "", params };
 }
 
+/**
+ * Resolve the day-boundary shift (minutes to ADD to ts before extracting
+ * day/hour) from, in order of precedence: an explicit ?tz= search param, a
+ * `tz` cookie set by <TzSync />, or UTC. Inputs use the JS
+ * Date#getTimezoneOffset() convention (IST +05:30 → -330), so they are negated.
+ */
+export function resolveDayShift(spTz?: string | null, cookieTz?: string | null): number {
+  const parse = (v?: string | null): number => {
+    if (v == null || v === "") return NaN;
+    const n = Number.parseInt(v, 10);
+    return Number.isFinite(n) && n >= -840 && n <= 840 ? -n : NaN;
+  };
+  const fromParam = parse(spTz);
+  if (Number.isFinite(fromParam)) return fromParam;
+  const fromCookie = parse(cookieTz);
+  if (Number.isFinite(fromCookie)) return fromCookie;
+  return 0;
+}
+
 /** Append filter params into a URL for API routes. */
 export function filtersToQuery(f: UsageFilters): URLSearchParams {
   const q = new URLSearchParams();

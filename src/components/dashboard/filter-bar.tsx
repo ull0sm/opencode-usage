@@ -75,6 +75,8 @@ export function FilterBar({ models }: { models: string[] }) {
   const push = useCallback(
     (mutate: (p: URLSearchParams) => void) => {
       const next = new URLSearchParams(params.toString());
+      // let the server group days/hours by this viewer's calendar (JS offset convention)
+      next.set("tz", String(new Date().getTimezoneOffset()));
       mutate(next);
       startTransition(() => router.replace(`/?${next.toString()}`, { scroll: false }));
     },

@@ -1,8 +1,10 @@
 import { Suspense } from "react";
 import Link from "next/link";
+import { cookies } from "next/headers";
 import {
   filtersFromSearchParams,
   previousPeriod,
+  resolveDayShift,
   type UsageFilters,
 } from "@/lib/filters";
 import {
@@ -45,16 +47,26 @@ function groupFromSearchParams(sp: Record<string, string | string[] | undefined>
 }
 
 const MAIN_CARD_COPY: Record<GroupBy, { title: string; description: string }> = {
-  day: { title: "Tokens over time", description: "Daily totals (UTC), stacked by category" },
-  hour: { title: "Tokens by hour of day", description: "Hourly totals (UTC), stacked by category" },
+  day: { title: "Tokens over time", description: "Daily totals in your local days, stacked by category" },
+  hour: { title: "Tokens by hour of day", description: "Hourly totals on your local clock, stacked by category" },
   model: { title: "Tokens by model", description: "Token composition per model" },
   session: { title: "Tokens by session", description: "Token composition per session (top 10)" },
 };
+
+/** Viewer timezone: ?tz= param wins, else the <TzSync /> cookie, else UTC. */
+async function dayShiftFromRequest(
+  sp: Record<string, string | string[] | undefined>
+): Promise<number> {
+  const spTz = typeof sp.tz === "string" ? sp.tz : undefined;
+  const cookieTz = (await cookies()).get("tz")?.value;
+  return resolveDayShift(spTz, cookieTz);
+}
 
 export default async function DashboardPage(props: PageProps<"/">) {
   const sp = await props.searchParams;
   const filter = filtersFromSearchParams(sp as Record<string, string | string[] | undefined>);
   const group = groupFromSearchParams(sp);
+  const dayShift = await dayShiftFromRequest(sp as Record<string, string | string[] | undefined>);
 
   const prevFilter = previousPeriod(filter);
   const [meta, summary, efficiency, prevSummary, series] = await Promise.all([
@@ -62,7 +74,7 @@ export default async function DashboardPage(props: PageProps<"/">) {
     getSummary(filter),
     getEfficiency(filter),
     prevFilter ? getSummary(prevFilter) : Promise.resolve(null),
-    getTimeseries(filter),
+    getTimeseries(filter, dayShift),
   ]);
 
   const filterKey = JSON.stringify(filter);
@@ -86,7 +98,7 @@ export default async function DashboardPage(props: PageProps<"/">) {
       <EfficiencyCards stats={efficiency} />
 
       <Suspense key={`${filterKey}-${group}`} fallback={<ChartSkeleton />}>
-        <MainChartSection filter={filter} group={group} />
+        <MainChartSection filter={filter} group={group} dayShift={dayShift} />
       </Suspense>
 
       <Suspense
@@ -98,7 +110,7 @@ export default async function DashboardPage(props: PageProps<"/">) {
           </div>
         }
       >
-        <TimeVizSection filter={filter} />
+        <TimeVizSection filter={filter} dayShift={dayShift} />
       </Suspense>
 
       <Suspense
@@ -120,7 +132,15 @@ export default async function DashboardPage(props: PageProps<"/">) {
   );
 }
 
-async function MainChartSection({ filter, group }: { filter: UsageFilters; group: GroupBy }) {
+async function MainChartSection({
+  filter,
+  group,
+  dayShift,
+}: {
+  filter: UsageFilters;
+  group: GroupBy;
+  dayShift: number;
+}) {
   const copy = MAIN_CARD_COPY[group];
   return (
     <Card>
@@ -129,11 +149,11 @@ async function MainChartSection({ filter, group }: { filter: UsageFilters; group
         <CardDescription>{copy.description}</CardDescription>
       </CardHeader>
       <CardContent>
-        {group === "day" && <TokensOverTimeChart data={await getTimeseries(filter)} />}
+        {group === "day" && <TokensOverTimeChart data={await getTimeseries(filter, dayShift)} />}
         {group === "hour" && (
           <TokensOverTimeChart
             granularity="hour"
-            data={(await getByHourOfDay(filter)).map((h) => ({
+            data={(await getByHourOfDay(filter, dayShift)).map((h) => ({
               date: `${h.hour}:00`,
               requests: h.requests,
               input_tokens: h.input_tokens,
@@ -178,10 +198,10 @@ async function CompositionOrNothing({
   );
 }
 
-async function TimeVizSection({ filter }: { filter: UsageFilters }) {
+async function TimeVizSection({ filter, dayShift }: { filter: UsageFilters; dayShift: number }) {
   const [series, byHour] = await Promise.all([
-    getTimeseries(filter),
-    getByHourOfDay(filter),
+    getTimeseries(filter, dayShift),
+    getByHourOfDay(filter, dayShift),
   ]);
   return (
     <div className="grid gap-4 lg:grid-cols-2">
@@ -198,7 +218,7 @@ async function TimeVizSection({ filter }: { filter: UsageFilters }) {
       <Card>
         <CardHeader>
           <CardTitle>Hour of day</CardTitle>
-          <CardDescription>When you burn tokens (UTC)</CardDescription>
+          <CardDescription>When you burn tokens (local time)</CardDescription>
         </CardHeader>
         <CardContent>
           <HourHistogram data={byHour} />
