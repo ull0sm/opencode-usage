@@ -10,6 +10,7 @@ import {
 import {
   getByHourOfDay,
   getByModel,
+  getByProject,
   getBySession,
   getEfficiency,
   getMeta,
@@ -27,6 +28,7 @@ import { TokensOverTimeChart } from "@/components/charts/tokens-over-time";
 import { CalendarHeatmap } from "@/components/charts/calendar-heatmap";
 import { HourHistogram } from "@/components/charts/hour-histogram";
 import { CompositionChart } from "@/components/charts/composition-chart";
+import { LiveRefresh } from "@/components/live-refresh";
 import {
   Card,
   CardContent,
@@ -34,11 +36,11 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import { fmtCost, fmtInt, truncate } from "@/lib/format";
+import { fmtCost, fmtInt, projectLabel, sessionTitle, truncate } from "@/lib/format";
 
 export const dynamic = "force-dynamic";
 
-const GROUPS = ["day", "hour", "model", "session"] as const;
+const GROUPS = ["day", "hour", "model", "session", "project"] as const;
 type GroupBy = (typeof GROUPS)[number];
 
 function groupFromSearchParams(sp: Record<string, string | string[] | undefined>): GroupBy {
@@ -51,6 +53,7 @@ const MAIN_CARD_COPY: Record<GroupBy, { title: string; description: string }> = 
   hour: { title: "Tokens by hour of day", description: "Hourly totals on your local clock, stacked by category" },
   model: { title: "Tokens by model", description: "Token composition per model" },
   session: { title: "Tokens by session", description: "Token composition per session (top 10)" },
+  project: { title: "Tokens by project", description: "Token composition per OpenCode project (top 10)" },
 };
 
 /** Viewer timezone: ?tz= param wins, else the <TzSync /> cookie, else UTC. */
@@ -128,6 +131,7 @@ export default async function DashboardPage(props: PageProps<"/">) {
       <Suspense key={`${filterKey}-efficiency`} fallback={<ChartSkeleton height="h-48" />}>
         <ModelEfficiencySection filter={filter} blendedCostPer1m={efficiency.blended_cost_per_1m} />
       </Suspense>
+      <LiveRefresh />
     </div>
   );
 }
@@ -164,7 +168,7 @@ async function MainChartSection({
             }))}
           />
         )}
-        {(group === "model" || group === "session") && (
+        {(group === "model" || group === "session" || group === "project") && (
           <CompositionOrNothing filter={filter} group={group} />
         )}
       </CardContent>
@@ -177,21 +181,36 @@ async function CompositionOrNothing({
   group,
 }: {
   filter: UsageFilters;
-  group: "model" | "session";
+  group: "model" | "session" | "project";
 }) {
   if (group === "model") {
     const byModel = await getByModel(filter);
     return <CompositionChart data={byModel.map((m) => ({ name: m.model, ...m }))} />;
   }
-  const bySession = await getBySession(filter);
+  if (group === "session") {
+    const bySession = await getBySession(filter);
+    return (
+      <CompositionChart
+        data={bySession.map((s) => ({
+          name: truncate(sessionTitle(s), 24),
+          input_tokens: s.input_tokens,
+          cache_read_tokens: s.cache_read_tokens,
+          output_tokens: s.output_tokens,
+          reasoning_tokens: s.reasoning_tokens,
+        }))}
+        labelWidth={120}
+      />
+    );
+  }
+  const byProject = await getByProject(filter);
   return (
     <CompositionChart
-      data={bySession.map((s) => ({
-        name: s.session_id ?? "(no session)",
-        input_tokens: s.input_tokens,
-        cache_read_tokens: s.cache_read_tokens,
-        output_tokens: s.output_tokens,
-        reasoning_tokens: s.reasoning_tokens,
+      data={byProject.map((p) => ({
+        name: projectLabel(p),
+        input_tokens: p.input_tokens,
+        cache_read_tokens: p.cache_read_tokens,
+        output_tokens: p.output_tokens,
+        reasoning_tokens: p.reasoning_tokens,
       }))}
       labelWidth={120}
     />
@@ -229,12 +248,13 @@ async function TimeVizSection({ filter, dayShift }: { filter: UsageFilters; dayS
 }
 
 async function BreakdownSection({ filter }: { filter: UsageFilters }) {
-  const [byModel, bySession] = await Promise.all([
+  const [byModel, bySession, byProject] = await Promise.all([
     getByModel(filter),
     getBySession(filter),
+    getByProject(filter),
   ]);
   return (
-    <div className="grid gap-4 lg:grid-cols-2">
+    <div className="grid gap-4 lg:grid-cols-2 xl:grid-cols-3">
       <Card>
         <CardHeader>
           <CardTitle>By model</CardTitle>
@@ -247,13 +267,58 @@ async function BreakdownSection({ filter }: { filter: UsageFilters }) {
 
       <Card>
         <CardHeader>
+          <CardTitle>Top projects</CardTitle>
+          <CardDescription>Token composition per OpenCode project</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <CompositionChart
+            data={byProject.map((p) => ({
+              name: projectLabel(p),
+              input_tokens: p.input_tokens,
+              cache_read_tokens: p.cache_read_tokens,
+              output_tokens: p.output_tokens,
+              reasoning_tokens: p.reasoning_tokens,
+            }))}
+            labelWidth={120}
+          />
+          {byProject.length > 0 && (
+            <div className="mt-4 space-y-1 text-xs text-muted-foreground">
+              {byProject.slice(0, 5).map((p) => {
+                const label = projectLabel(p);
+                const body = (
+                  <>
+                    <span className="truncate">{label}</span>
+                    <span>{fmtInt(p.sessions)} sess · {fmtCost(p.cost)}</span>
+                  </>
+                );
+                return p.project_id ? (
+                  <Link
+                    key={p.project_id}
+                    href={`/projects/${encodeURIComponent(p.project_id)}`}
+                    className="flex justify-between gap-2 underline-offset-4 hover:text-foreground hover:underline"
+                  >
+                    {body}
+                  </Link>
+                ) : (
+                  <div key="none" className="flex justify-between gap-2">
+                    {body}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
           <CardTitle>Top sessions</CardTitle>
           <CardDescription>Token composition per session (top 10)</CardDescription>
         </CardHeader>
         <CardContent>
           <CompositionChart
             data={bySession.map((s) => ({
-              name: s.session_id ?? "(no session)",
+              name: truncate(sessionTitle(s), 24),
               input_tokens: s.input_tokens,
               cache_read_tokens: s.cache_read_tokens,
               output_tokens: s.output_tokens,
@@ -266,7 +331,7 @@ async function BreakdownSection({ filter }: { filter: UsageFilters }) {
               {bySession.slice(0, 5).map((s) => {
                 const body = (
                   <>
-                    <span className="truncate">{truncate(s.session_id ?? "(no session)", 28)}</span>
+                    <span className="truncate">{sessionTitle(s)}</span>
                     <span>{fmtInt(s.requests)} req · {fmtCost(s.cost)}</span>
                   </>
                 );
@@ -274,12 +339,12 @@ async function BreakdownSection({ filter }: { filter: UsageFilters }) {
                   <Link
                     key={s.session_id}
                     href={`/sessions/${encodeURIComponent(s.session_id)}`}
-                    className="flex justify-between gap-2 font-mono underline-offset-4 hover:text-foreground hover:underline"
+                    className="flex justify-between gap-2 underline-offset-4 hover:text-foreground hover:underline"
                   >
                     {body}
                   </Link>
                 ) : (
-                  <div key="none" className="flex justify-between gap-2 font-mono">
+                  <div key="none" className="flex justify-between gap-2">
                     {body}
                   </div>
                 );

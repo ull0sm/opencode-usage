@@ -36,6 +36,7 @@ const GROUPS = [
   { value: "hour", label: "Hour of day" },
   { value: "model", label: "Model" },
   { value: "session", label: "Session" },
+  { value: "project", label: "Project" },
 ] as const;
 
 function isoDay(d: Date): string {

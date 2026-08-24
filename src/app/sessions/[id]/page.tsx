@@ -1,8 +1,10 @@
 import Link from "next/link";
-import { ArrowLeft, Clock } from "lucide-react";
+import { ArrowLeft, Clock, FolderGit2 } from "lucide-react";
 import { getSessionDetail, listSessionEvents } from "@/lib/db/queries";
 import { SummaryCards } from "@/components/dashboard/summary-cards";
 import { SessionTimelineChart } from "@/components/charts/session-timeline-chart";
+import { RenameControl } from "@/components/shared/rename-control";
+import { LiveRefresh } from "@/components/live-refresh";
 import {
   Card,
   CardContent,
@@ -18,7 +20,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { fmtCost, fmtDuration, fmtInt } from "@/lib/format";
+import { fmtCost, fmtDuration, fmtInt, sessionTitle } from "@/lib/format";
 import { LocalTime } from "@/components/local-time";
 import type { UsageEvent } from "@/lib/types";
 
@@ -59,16 +61,35 @@ export default async function SessionPage(
 
   const events = listSessionEvents(decoded) as unknown as SessionEventRow[];
   const duration = fmtDuration(detail.first_ts, detail.last_ts);
+  const name = sessionTitle(detail);
 
   return (
     <div className="mx-auto flex w-full max-w-6xl flex-col gap-6 p-6">
       <BackLink />
 
       <div className="flex flex-col gap-1">
-        <h1 className="text-xl font-semibold tracking-tight">Session</h1>
-        <p className="font-mono text-sm break-all text-muted-foreground">
-          {decoded}
-        </p>
+        <div className="flex items-center gap-2">
+          <h1 className="text-xl font-semibold tracking-tight">{name}</h1>
+          <RenameControl
+            endpoint={`/api/sessions/${encodeURIComponent(detail.session_id)}`}
+            field="title"
+            initialValue={detail.title}
+          />
+        </div>
+        <p className="font-mono text-sm break-all text-muted-foreground">{decoded}</p>
+        <div className="mt-1 flex items-center gap-1.5 text-sm text-muted-foreground">
+          <FolderGit2 className="size-3.5" />
+          {detail.project_id ? (
+            <Link
+              href={`/projects/${encodeURIComponent(detail.project_id)}`}
+              className="underline-offset-4 hover:text-foreground hover:underline"
+            >
+              {detail.project_name || detail.project_id}
+            </Link>
+          ) : (
+            <span>(no project)</span>
+          )}
+        </div>
       </div>
 
       <div className="flex flex-wrap items-center gap-4 text-sm text-muted-foreground">
@@ -154,6 +175,7 @@ export default async function SessionPage(
           </div>
         </CardContent>
       </Card>
+      <LiveRefresh />
     </div>
   );
 }

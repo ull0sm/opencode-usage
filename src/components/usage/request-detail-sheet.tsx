@@ -25,6 +25,8 @@ interface DetailRow extends UsageEvent {
   model: string;
   provider: string | null;
   session_id: string | null;
+  session_title?: string | null;
+  project_name?: string | null;
   input_tokens: number;
   cache_read_tokens: number;
   cache_write_tokens: number;
@@ -109,16 +111,19 @@ function DetailBody({ id, onClose }: { id: number; onClose: () => void }) {
                       <Link
                         href={`/sessions/${encodeURIComponent(row.session_id)}`}
                         onClick={onClose}
-                        className="font-mono text-xs text-primary underline-offset-4 hover:underline"
+                        title={row.session_title ? row.session_id : undefined}
+                        className={`text-xs text-primary underline-offset-4 hover:underline ${
+                          row.session_title ? "" : "font-mono"
+                        }`}
                       >
-                        {row.session_id}
+                        {row.session_title ?? row.session_id}
                       </Link>
                     ) : (
                       "—"
                     )
                   }
-                  mono
                 />
+                {row.project_name && <Field label="Project" value={row.project_name} />}
                 {row.source_ref && (
                   <Field label="Source ref" value={row.source_ref} mono />
                 )}

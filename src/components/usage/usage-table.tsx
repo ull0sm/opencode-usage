@@ -39,6 +39,8 @@ interface Row {
   model: string;
   provider: string | null;
   session_id: string | null;
+  session_title?: string | null;
+  project_name?: string | null;
   input_tokens: number;
   cache_read_tokens: number;
   output_tokens: number;
@@ -318,9 +320,14 @@ export function UsageTable({ models }: Props) {
                       <Link
                         href={`/sessions/${encodeURIComponent(row.session_id)}`}
                         onClick={(e) => e.stopPropagation()}
-                        className="font-mono text-xs text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
+                        title={row.session_title ? row.session_id : undefined}
+                        className={`max-w-40 block truncate text-xs underline-offset-4 hover:text-foreground hover:underline ${
+                          row.session_title
+                            ? "text-foreground"
+                            : "font-mono text-muted-foreground"
+                        }`}
                       >
-                        {row.session_id}
+                        {row.session_title ?? row.session_id}
                       </Link>
                     ) : (
                       <span className="text-muted-foreground">—</span>

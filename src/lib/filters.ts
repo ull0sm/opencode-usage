@@ -4,6 +4,7 @@ export interface UsageFilters {
   model?: string | string[];
   provider?: string;
   session?: string;
+  project?: string;
 }
 
 type SearchParamsLike = Record<string, string | string[] | undefined>;
@@ -36,12 +37,14 @@ export function filtersFromSearchParams(sp: SearchParamsLike): UsageFilters {
   const models = allValues(sp, "model").filter((m) => m !== "all");
   const provider = firstValue(sp, "provider");
   const session = firstValue(sp, "session");
+  const project = firstValue(sp, "project");
   if (from) f.from = from;
   if (to) f.to = to;
   if (models.length === 1) f.model = models[0];
   else if (models.length > 1) f.model = models;
   if (provider && provider !== "all") f.provider = provider;
   if (session) f.session = session;
+  if (project) f.project = project;
   return f;
 }
 
@@ -51,6 +54,7 @@ export function hasFilters(f: UsageFilters): boolean {
       f.to ||
       f.provider ||
       f.session ||
+      f.project ||
       modelList(f.model)
   );
 }
@@ -86,30 +90,36 @@ export function buildWhere(f: UsageFilters): WhereClause {
   const params: unknown[] = [];
 
   if (f.from) {
-    conds.push("ts >= ?");
+    conds.push("usage_events.ts >= ?");
     params.push(tsLowerBound(f.from));
   }
   if (f.to) {
-    conds.push("ts <= ?");
+    conds.push("usage_events.ts <= ?");
     params.push(tsUpperBound(f.to));
   }
 
   const models = modelList(f.model);
   if (models?.length === 1) {
-    conds.push("model = ?");
+    conds.push("usage_events.model = ?");
     params.push(models[0]);
   } else if (models && models.length > 1) {
-    conds.push(`model IN (${models.map(() => "?").join(", ")})`);
+    conds.push(`usage_events.model IN (${models.map(() => "?").join(", ")})`);
     params.push(...models);
   }
 
   if (f.provider) {
-    conds.push("provider = ?");
+    conds.push("usage_events.provider = ?");
     params.push(f.provider);
   }
   if (f.session) {
-    conds.push("session_id LIKE '%' || ? || '%'");
+    conds.push("usage_events.session_id LIKE '%' || ? || '%'");
     params.push(f.session);
+  }
+  if (f.project) {
+    conds.push(
+      `usage_events.session_id IN (SELECT s0.session_id FROM sessions s0 WHERE s0.project_id = ?)`
+    );
+    params.push(f.project);
   }
   return { sql: conds.length ? `WHERE ${conds.join(" AND ")}` : "", params };
 }
@@ -141,5 +151,6 @@ export function filtersToQuery(f: UsageFilters): URLSearchParams {
   for (const m of modelList(f.model) ?? []) q.append("model", m);
   if (f.provider) q.set("provider", f.provider);
   if (f.session) q.set("session", f.session);
+  if (f.project) q.set("project", f.project);
   return q;
 }

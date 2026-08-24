@@ -50,12 +50,52 @@ export interface ModelBreakdown {
 
 export interface SessionBreakdown {
   session_id: string | null;
+  title: string | null;
+  slug: string | null;
+  project_id: string | null;
+  project_name: string | null;
   requests: number;
   input_tokens: number;
   cache_read_tokens: number;
   output_tokens: number;
   reasoning_tokens: number;
   cost: number;
+  last_ts: string | null;
+}
+
+export interface SessionListItem {
+  session_id: string;
+  title: string | null;
+  slug: string | null;
+  directory: string | null;
+  project_id: string | null;
+  project_name: string | null;
+  requests: number;
+  total_tokens: number;
+  cost: number;
+  first_ts: string | null;
+  last_ts: string | null;
+}
+
+export interface ProjectBreakdown {
+  project_id: string | null;
+  name: string | null;
+  worktree: string | null;
+  sessions: number;
+  requests: number;
+  input_tokens: number;
+  cache_read_tokens: number;
+  output_tokens: number;
+  reasoning_tokens: number;
+  cost: number;
+  last_ts: string | null;
+}
+
+export interface ProjectDetail extends SummaryRow {
+  project_id: string;
+  name: string | null;
+  worktree: string | null;
+  first_ts: string | null;
   last_ts: string | null;
 }
 

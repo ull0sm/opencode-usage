@@ -45,7 +45,33 @@ const src = new Database(path.join(tmpDir, "oc.db"));
 src.pragma("busy_timeout = 3000");
 
 const rows = src.prepare("SELECT id, session_id, time_created, data FROM message ORDER BY time_created ASC").all();
+
+const sessionMeta = new Map();
+try {
+  for (const s of src.prepare("SELECT id, title, slug, directory, project_id FROM session").all()) {
+    sessionMeta.set(s.id, s);
+  }
+} catch {}
+const projectMeta = [];
+try {
+  for (const p of src.prepare("SELECT id, name, worktree FROM project").all()) {
+    projectMeta.push({ project_id: p.id, name: p.name, worktree: p.worktree });
+  }
+} catch {}
 src.close();
+
+const byWorktree = new Map();
+for (const p of projectMeta) {
+  if (p.worktree) byWorktree.set(p.worktree, p.project_id);
+}
+const syntheticDirs = new Set();
+
+function resolveProjectId(projectId, directory) {
+  if (projectId && projectId !== "global") return projectId;
+  const dir = typeof directory === "string" ? directory.trim() : "";
+  if (!dir) return projectId ?? null;
+  return byWorktree.get(dir) ?? dir;
+}
 
 fs.mkdirSync(path.dirname(APP_DB), { recursive: true });
 const app = new Database(APP_DB);
@@ -65,7 +91,7 @@ let inserted = 0;
 let skippedDupes = 0;
 let skippedEmpty = 0;
 let errors = 0;
-const perSession = new Map();
+const seenSessions = new Set();
 
 const run = app.transaction(() => {
   for (const row of rows) {
@@ -105,6 +131,7 @@ const run = app.transaction(() => {
     }
     const provider = typeof msg.providerID === "string" && msg.providerID ? msg.providerID : null;
     const sessionId = String(msg.session_id || row.session_id);
+    seenSessions.add(sessionId);
     const input = Number(t.input ?? 0);
     const cacheRead = Number(c.read ?? 0);
     const cacheWrite = Number(c.write ?? 0);
@@ -120,7 +147,6 @@ const run = app.transaction(() => {
     );
     if (info.changes > 0) {
       inserted++;
-      perSession.set(sessionId, (perSession.get(sessionId) ?? 0) + 1);
     } else {
       skippedDupes++;
     }
@@ -128,10 +154,49 @@ const run = app.transaction(() => {
 });
 run();
 
+const upsertSession = app.prepare(`
+  INSERT INTO sessions (session_id, title, slug, directory, project_id)
+  VALUES (?, ?, ?, ?, ?)
+  ON CONFLICT(session_id) DO UPDATE SET
+    title = COALESCE(excluded.title, sessions.title),
+    slug = COALESCE(excluded.slug, sessions.slug),
+    directory = COALESCE(excluded.directory, sessions.directory),
+    project_id = COALESCE(excluded.project_id, sessions.project_id),
+    time_updated = strftime('%Y-%m-%dT%H:%M:%fZ','now')
+`);
+const upsertProject = app.prepare(`
+  INSERT INTO projects (project_id, name, worktree)
+  VALUES (?, ?, ?)
+  ON CONFLICT(project_id) DO UPDATE SET
+    name = COALESCE(excluded.name, projects.name),
+    worktree = COALESCE(excluded.worktree, projects.worktree),
+    time_updated = strftime('%Y-%m-%dT%H:%M:%fZ','now')
+`);
+app.transaction(() => {
+  for (const id of seenSessions) {
+    const s = sessionMeta.get(id);
+    const resolved = resolveProjectId(s?.project_id, s?.directory);
+    if (
+      s?.directory &&
+      (!s.project_id || s.project_id === "global") &&
+      !byWorktree.has(s.directory) &&
+      !syntheticDirs.has(s.directory)
+    ) {
+      syntheticDirs.add(s.directory);
+      projectMeta.push({ project_id: s.directory, name: null, worktree: s.directory });
+    }
+    upsertSession.run(id, s?.title ?? null, s?.slug ?? null, s?.directory ?? null, resolved ?? null);
+  }
+  for (const p of projectMeta) upsertProject.run(p.project_id, p.name ?? null, p.worktree ?? null);
+})();
+
 console.log(`source : ${SOURCE_DB}`);
 console.log(`scanned: ${rows.length} messages (${assistants} assistant, ${skippedEmpty} empty, ${errors} errors)`);
 console.log(`imported: ${inserted} records (${skippedDupes} duplicates already present)`);
-for (const [id, n] of perSession) console.log(`  ${id}: ${n} message(s)`);
+for (const id of seenSessions) {
+  const t = sessionMeta.get(id)?.title;
+  console.log(`  ${id}${t ? ` — ${t}` : ""}`);
+}
 
 app.close();
 fs.rmSync(tmpDir, { recursive: true, force: true });

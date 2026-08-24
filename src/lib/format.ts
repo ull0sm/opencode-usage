@@ -71,3 +71,33 @@ export function fmtDuration(
   const days = Math.floor(hours / 24);
   return `${days} d ${hours % 24} h`;
 }
+
+/** Last path segment of a worktree/directory, e.g. "/a/b/repo" → "repo". */
+export function baseName(p: string | null | undefined): string {
+  if (!p || p === "/") return "";
+  return p.replace(/\/+$/, "").split("/").pop() || p;
+}
+
+/** Best display label for a project row coming out of getByProject/listProjects. */
+export function projectLabel(
+  row: { name?: string | null; worktree?: string | null; project_id?: string | null }
+): string {
+  if (row.name) return baseName(row.name) || row.name;
+  if (row.project_id === "global") return "Ad-hoc";
+  if (row.project_id) return truncate(row.project_id, 14);
+  return "(no project)";
+}
+
+/**
+ * OpenCode's placeholder title for never-titled sessions,
+ * e.g. "New session - 2026-08-24T08:41:06.246Z" — the slug reads better.
+ */
+const PLACEHOLDER_TITLE = /^New session - \d{4}-\d{2}-\d{2}T[\d:.]+Z$/;
+
+/** Best display title for a session: real title → slug → raw id. */
+export function sessionTitle(
+  s: { title?: string | null; slug?: string | null; session_id?: string | null }
+): string {
+  const title = s.title && !PLACEHOLDER_TITLE.test(s.title.trim()) ? s.title : null;
+  return title || s.slug || s.session_id || "(no session)";
+}

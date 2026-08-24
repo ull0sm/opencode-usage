@@ -21,3 +21,23 @@ CREATE INDEX IF NOT EXISTS idx_usage_model     ON usage_events(model);
 CREATE INDEX IF NOT EXISTS idx_usage_session   ON usage_events(session_id);
 CREATE INDEX IF NOT EXISTS idx_usage_provider  ON usage_events(provider);
 CREATE INDEX IF NOT EXISTS idx_usage_session_ts ON usage_events(session_id, ts);
+
+CREATE TABLE IF NOT EXISTS sessions (
+  session_id     TEXT PRIMARY KEY,
+  title          TEXT,                      -- from OpenCode
+  slug           TEXT,                      -- short OpenCode name, e.g. "misty-garden"
+  title_override TEXT,                      -- manual rename; wins over everything
+  directory      TEXT,
+  project_id     TEXT,
+  time_updated   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+
+CREATE TABLE IF NOT EXISTS projects (
+  project_id     TEXT PRIMARY KEY,
+  name           TEXT,                      -- from OpenCode (often NULL)
+  name_override  TEXT,                      -- manual rename; wins over everything
+  worktree       TEXT,
+  time_updated   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_sessions_project ON sessions(project_id);

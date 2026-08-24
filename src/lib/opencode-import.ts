@@ -3,7 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import Database from "better-sqlite3";
 import { normalizeRecord } from "./validation";
-import { insertRecords } from "./db/queries";
+import { insertRecords, upsertProjects, upsertSessions } from "./db/queries";
 import type { UsageRecord } from "./types";
 
 /** Locate OpenCode's local SQLite database (v2 storage). */
@@ -27,6 +27,22 @@ interface RawMessageRow {
   session_id: string;
   time_created: number;
   data: string;
+}
+
+/**
+ * OpenCode tags sessions opened in unregistered folders as project "global",
+ * losing folder information. Resolve those to a real project by exact
+ * worktree match, or synthesize a folder-keyed project (id = directory path).
+ */
+export function resolveProjectId(
+  projectId: string | null | undefined,
+  directory: string | null | undefined,
+  byWorktree: Map<string, string>
+): string | null {
+  if (projectId && projectId !== "global") return projectId;
+  const dir = directory?.trim();
+  if (!dir) return projectId ?? null;
+  return byWorktree.get(dir) ?? dir;
 }
 
 export interface OpencodeSessionInfo {
@@ -73,17 +89,40 @@ export function importFromOpencode(dbPath?: string): OpencodeImportStats {
     }
     const odb = new Database(path.join(tmpDir, "oc.db"));
 
-    const titles = new Map<string, { title: string | null; directory: string | null }>();
+    interface OcSessionRow {
+      id: string;
+      title: string | null;
+      slug: string | null;
+      directory: string | null;
+      project_id: string | null;
+    }
+    const sessionMeta = new Map<string, OcSessionRow>();
     try {
-      const sessRows = odb.prepare("SELECT id, title, directory FROM session").all() as {
-        id: string;
-        title: string | null;
-        directory: string | null;
-      }[];
-      for (const s of sessRows) titles.set(s.id, { title: s.title, directory: s.directory });
+      const sessRows = odb
+        .prepare("SELECT id, title, slug, directory, project_id FROM session")
+        .all() as OcSessionRow[];
+      for (const s of sessRows) sessionMeta.set(s.id, s);
     } catch {
       // session table optional — titles are cosmetic
     }
+
+    const projectMeta: { project_id: string; name: string | null; worktree: string | null }[] = [];
+    try {
+      const projRows = odb.prepare("SELECT id, name, worktree FROM project").all() as {
+        id: string;
+        name: string | null;
+        worktree: string | null;
+      }[];
+      for (const p of projRows) projectMeta.push({ project_id: p.id, name: p.name, worktree: p.worktree });
+    } catch {
+      // project table optional — grouping falls back to "(no project)"
+    }
+
+    const byWorktree = new Map<string, string>();
+    for (const p of projectMeta) {
+      if (p.worktree) byWorktree.set(p.worktree, p.project_id);
+    }
+    const syntheticDirs = new Set<string>();
 
     const rows = odb
       .prepare("SELECT id, session_id, time_created, data FROM message ORDER BY time_created ASC")
@@ -149,6 +188,30 @@ export function importFromOpencode(dbPath?: string): OpencodeImportStats {
       perSession.set(r.session_id, (perSession.get(r.session_id) ?? 0) + 1);
     }
 
+    upsertSessions(
+      [...perSession.keys()].map((id) => {
+        const s = sessionMeta.get(id);
+        const resolved = resolveProjectId(s?.project_id, s?.directory, byWorktree);
+        if (
+          s?.directory &&
+          (!s.project_id || s.project_id === "global") &&
+          !byWorktree.has(s.directory) &&
+          !syntheticDirs.has(s.directory)
+        ) {
+          syntheticDirs.add(s.directory);
+          projectMeta.push({ project_id: s.directory, name: null, worktree: s.directory });
+        }
+        return {
+          session_id: id,
+          title: s?.title ?? null,
+          slug: s?.slug ?? null,
+          directory: s?.directory ?? null,
+          project_id: resolved ?? null,
+        };
+      })
+    );
+    upsertProjects(projectMeta);
+
     return {
       db_path: src,
       total_messages: rows.length,
@@ -161,8 +224,8 @@ export function importFromOpencode(dbPath?: string): OpencodeImportStats {
       error_samples: errorSamples,
       sessions: [...perSession.entries()].map(([id, messages]) => ({
         id,
-        title: titles.get(id)?.title ?? null,
-        directory: titles.get(id)?.directory ?? null,
+        title: sessionMeta.get(id)?.title ?? null,
+        directory: sessionMeta.get(id)?.directory ?? null,
         messages_imported: messages,
       })),
     };
