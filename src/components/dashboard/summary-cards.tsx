@@ -1,7 +1,11 @@
+"use client";
+
 import { ArrowDownRight, ArrowUpRight } from "lucide-react";
 import { Card, CardDescription, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Sparkline } from "@/components/dashboard/sparkline";
+import { CompactNumber } from "@/components/dashboard/compact-number";
 import { fmtCost, fmtInt } from "@/lib/format";
+import { TOKEN_SERIES } from "@/lib/colors";
 import type { SummaryRow, TimeseriesPoint } from "@/lib/types";
 
 interface Props {
@@ -32,7 +36,9 @@ export function SummaryCards({ s, previous, series }: Props) {
         <CardHeader>
           <CardDescription>Requests</CardDescription>
           <div className="flex items-center justify-between gap-2">
-            <CardTitle className="text-3xl tabular-nums">{fmtInt(s.requests)}</CardTitle>
+            <CardTitle className="text-3xl tabular-nums">
+              <CompactNumber value={s.requests} />
+            </CardTitle>
             <DeltaBadge current={s.requests} previous={previous?.requests ?? null} />
           </div>
         </CardHeader>
@@ -41,37 +47,42 @@ export function SummaryCards({ s, previous, series }: Props) {
         </CardContent>
       </Card>
 
-      <Card className="border-l-2" style={{ borderLeftColor: "#22d3ee" }}>
+      <Card className="border-l-2" style={{ borderLeftColor: TOKEN_SERIES[1].color }}>
         <CardHeader>
           <CardDescription>Context sent</CardDescription>
           <div className="flex items-center justify-between gap-2">
-            <CardTitle className="text-3xl tabular-nums">{fmtInt(contextSent)}</CardTitle>
+            <CardTitle className="text-3xl tabular-nums">
+              <CompactNumber value={contextSent} />
+            </CardTitle>
             <DeltaBadge current={contextSent} previous={prevContext} />
           </div>
         </CardHeader>
         <CardContent className="space-y-1 pt-0">
           <Sparkline data={dailyContext} color="#22d3ee" className="h-7 w-full" />
           <p className="text-xs text-muted-foreground">
-            input {fmtInt(s.input_tokens)} · cache read{" "}
-            <span style={{ color: "#22d3ee" }}>{fmtInt(s.cache_read_tokens)}</span>
+            input <span style={{ color: TOKEN_SERIES[0].color }}>{fmtInt(s.input_tokens)}</span> ·
+            cache read {fmtInt(s.cache_read_tokens)}
             {s.cache_write_tokens > 0 && <> · +{fmtInt(s.cache_write_tokens)} written to cache</>}
           </p>
         </CardContent>
       </Card>
 
-      <Card className="border-l-2" style={{ borderLeftColor: "#34d399" }}>
+      <Card className="border-l-2" style={{ borderLeftColor: TOKEN_SERIES[2].color }}>
         <CardHeader>
           <CardDescription>Generated</CardDescription>
           <div className="flex items-center justify-between gap-2">
-            <CardTitle className="text-3xl tabular-nums">{fmtInt(generated)}</CardTitle>
+            <CardTitle className="text-3xl tabular-nums">
+              <CompactNumber value={generated} />
+            </CardTitle>
             <DeltaBadge current={generated} previous={prevGenerated} />
           </div>
         </CardHeader>
         <CardContent className="space-y-1 pt-0">
           <Sparkline data={dailyGenerated} color="#34d399" className="h-7 w-full" />
           <p className="text-xs text-muted-foreground">
-            output <span style={{ color: "#34d399" }}>{fmtInt(s.output_tokens)}</span> · reasoning{" "}
-            <span style={{ color: "#a78bfa" }}>{fmtInt(s.reasoning_tokens)}</span>
+            output <span style={{ color: TOKEN_SERIES[2].color }}>{fmtInt(s.output_tokens)}</span> ·
+            reasoning{" "}
+            <span style={{ color: TOKEN_SERIES[3].color }}>{fmtInt(s.reasoning_tokens)}</span>
           </p>
         </CardContent>
       </Card>
@@ -80,7 +91,9 @@ export function SummaryCards({ s, previous, series }: Props) {
         <CardHeader>
           <CardDescription>Total cost</CardDescription>
           <div className="flex items-center justify-between gap-2">
-            <CardTitle className="text-3xl tabular-nums">{fmtCost(s.cost)}</CardTitle>
+            <CardTitle className="text-3xl tabular-nums">
+              <CompactNumber value={s.cost} prefix="$" decimals={4} />
+            </CardTitle>
             <DeltaBadge
               current={s.cost}
               previous={previous?.cost ?? null}
