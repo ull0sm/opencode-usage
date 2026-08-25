@@ -1,0 +1,5 @@
+blank_issues_enabled: true
+contact_links:
+  - name: OpenCode (the coding agent this app analyzes)
+    url: https://opencode.ai
+    about: Issues with OpenCode itself belong upstream, not here.
